@@ -17,6 +17,12 @@ const api = {
   storeSet: (key: string, value: unknown) => ipcRenderer.invoke('store-set', key, value),
   storeDelete: (key: string) => ipcRenderer.invoke('store-delete', key),
 
+  // Keybinds
+  getKeybinds: (): Promise<{ screenshot: string; record: string }> =>
+    ipcRenderer.invoke('get-keybinds'),
+  setKeybinds: (binds: { screenshot: string; record: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('set-keybinds', binds),
+
   // Shell
   openExternal: (url: string) => ipcRenderer.send('open-external', url),
 

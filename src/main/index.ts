@@ -25,6 +25,12 @@ let mainWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 
+const DEFAULT_KEYBINDS = { screenshot: 'CmdOrCtrl+Shift+S', record: 'CmdOrCtrl+Shift+R' }
+let currentKeybinds = {
+  screenshot: (store.get('keybind.screenshot') as string | undefined) ?? DEFAULT_KEYBINDS.screenshot,
+  record: (store.get('keybind.record') as string | undefined) ?? DEFAULT_KEYBINDS.record
+}
+
 // ─── Windows ────────────────────────────────────────────────────────────────
 
 function createMainWindow(): BrowserWindow {
@@ -116,59 +122,50 @@ function closeOverlay(): void {
   overlayWindow = null
 }
 
+// ─── Shortcuts ──────────────────────────────────────────────────────────────
+
+function registerShortcuts(): { ok: boolean; error?: string } {
+  globalShortcut.unregisterAll()
+  if (!globalShortcut.register(currentKeybinds.screenshot, startCapture)) {
+    return { ok: false, error: `Could not register ${currentKeybinds.screenshot} — it may already be in use` }
+  }
+  if (!globalShortcut.register(currentKeybinds.record, startRecording)) {
+    globalShortcut.unregister(currentKeybinds.screenshot)
+    return { ok: false, error: `Could not register ${currentKeybinds.record} — it may already be in use` }
+  }
+  return { ok: true }
+}
+
 // ─── Tray ───────────────────────────────────────────────────────────────────
 
+function buildTrayMenu(): Menu {
+  return Menu.buildFromTemplate([
+    { label: 'Screenshot', accelerator: currentKeybinds.screenshot, click: startCapture },
+    { label: 'Record', accelerator: currentKeybinds.record, click: startRecording },
+    { type: 'separator' },
+    { label: 'Open Dashboard', click: () => { mainWindow?.show(); mainWindow?.focus() } },
+    {
+      label: 'Settings', click: () => {
+        mainWindow?.show()
+        mainWindow?.focus()
+        mainWindow?.webContents.send('navigate', 'settings')
+      }
+    },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { app.isQuitting = true; app.quit() } }
+  ])
+}
+
+function refreshTrayMenu(): void {
+  tray?.setContextMenu(buildTrayMenu())
+}
+
 function setupTray(): void {
-  // Use empty icon as placeholder; replace resources/icon.png with real icon
   const icon = nativeImage.createEmpty()
   tray = new Tray(icon)
-
-  const updateMenu = (): void => {
-    const menu = Menu.buildFromTemplate([
-      {
-        label: 'Screenshot',
-        accelerator: 'CmdOrCtrl+Shift+S',
-        click: startCapture
-      },
-      {
-        label: 'Record',
-        accelerator: 'CmdOrCtrl+Shift+R',
-        click: startRecording
-      },
-      { type: 'separator' },
-      {
-        label: 'Open Dashboard',
-        click: () => {
-          mainWindow?.show()
-          mainWindow?.focus()
-        }
-      },
-      {
-        label: 'Settings',
-        click: () => {
-          mainWindow?.show()
-          mainWindow?.focus()
-          mainWindow?.webContents.send('navigate', 'settings')
-        }
-      },
-      { type: 'separator' },
-      {
-        label: 'Quit',
-        click: () => {
-          app.isQuitting = true
-          app.quit()
-        }
-      }
-    ])
-    tray!.setContextMenu(menu)
-  }
-
-  updateMenu()
+  tray.setContextMenu(buildTrayMenu())
   tray.setToolTip('CaptureApp')
-  tray.on('click', () => {
-    mainWindow?.show()
-    mainWindow?.focus()
-  })
+  tray.on('click', () => { mainWindow?.show(); mainWindow?.focus() })
   tray.on('double-click', startCapture)
 }
 
@@ -270,6 +267,24 @@ function setupIPC(): void {
   // Window controls
   ipcMain.on('minimize-window', () => mainWindow?.minimize())
   ipcMain.on('hide-window', () => mainWindow?.hide())
+
+  // Keybind management
+  ipcMain.handle('get-keybinds', () => ({ ...currentKeybinds }))
+
+  ipcMain.handle('set-keybinds', (_event, binds: typeof currentKeybinds) => {
+    const prev = { ...currentKeybinds }
+    currentKeybinds = { ...binds }
+    const result = registerShortcuts()
+    if (result.ok) {
+      store.set('keybind.screenshot', binds.screenshot)
+      store.set('keybind.record', binds.record)
+      refreshTrayMenu()
+    } else {
+      currentKeybinds = prev
+      registerShortcuts()
+    }
+    return result
+  })
 }
 
 // ─── Auto-updater ───────────────────────────────────────────────────────────
@@ -304,8 +319,7 @@ app.whenReady().then(() => {
   mainWindow = createMainWindow()
   setupTray()
 
-  globalShortcut.register('CmdOrCtrl+Shift+S', startCapture)
-  globalShortcut.register('CmdOrCtrl+Shift+R', startRecording)
+  registerShortcuts()
 
   if (!is.dev) setupAutoUpdater()
 
