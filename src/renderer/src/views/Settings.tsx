@@ -7,12 +7,12 @@ type Keybinds = { screenshot: string; record: string }
 
 // ─── Keybind helpers ─────────────────────────────────────────────────────────
 
+const isMac = window.electron?.process?.platform === 'darwin'
+
 function accParts(acc: string): string[] {
   return acc.split('+').map((p) => {
-    if (p === 'CmdOrCtrl' || p === 'CommandOrControl') {
-      return process.platform === 'darwin' ? '⌘' : 'Ctrl'
-    }
-    if (p === 'Alt') return process.platform === 'darwin' ? '⌥' : 'Alt'
+    if (p === 'CmdOrCtrl' || p === 'CommandOrControl') return isMac ? '⌘' : 'Ctrl'
+    if (p === 'Alt') return isMac ? '⌥' : 'Alt'
     return p
   })
 }

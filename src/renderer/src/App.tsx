@@ -3,6 +3,8 @@ import { Overlay } from './views/Overlay'
 import { Editor } from './views/Editor'
 import { Settings } from './views/Settings'
 import { Home } from './views/Home'
+import { History } from './views/History'
+import { Record } from './views/Record'
 
 type View = 'home' | 'editor' | 'history' | 'record' | 'settings'
 
@@ -71,21 +73,14 @@ export default function App() {
           <Placeholder message="No capture yet — press Ctrl+Shift+S to take a screenshot" />
         ) : null}
 
-        {view === 'history' && <Placeholder message="History — coming in Phase 3" />}
-        {view === 'record' && <Placeholder message="Screen recording — coming in Phase 4" />}
+        {view === 'history' && <History />}
+        {view === 'record' && <Record />}
         {view === 'settings' && <Settings />}
       </div>
     </div>
   )
 }
 
-function Placeholder({ message }: { message: string }) {
-  return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3f3f46', fontSize: 13 }}>
-      {message}
-    </div>
-  )
-}
 
 const navBar: React.CSSProperties = {
   padding: '10px 20px',

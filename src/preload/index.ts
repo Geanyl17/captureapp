@@ -23,6 +23,25 @@ const api = {
   setKeybinds: (binds: { screenshot: string; record: string }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('set-keybinds', binds),
 
+  // Recording
+  getRecordSources: (): Promise<{ id: string; name: string; thumbnail: string }[]> =>
+    ipcRenderer.invoke('get-record-sources'),
+  setRecordSource: (id: string) => ipcRenderer.send('set-record-source', id),
+
+  // Upload (routed through main to bypass CORS)
+  uploadFile: (opts: { buffer: Uint8Array; filename: string; mimeType: string; token: string; baseUrl: string }): Promise<string> =>
+    ipcRenderer.invoke('upload-file', opts),
+
+  // History
+  historyAdd: (item: { id: string; url: string; filename: string; thumbnail: string; timestamp: number }): Promise<void> =>
+    ipcRenderer.invoke('history-add', item),
+  historyGet: (): Promise<{ id: string; url: string; filename: string; thumbnail: string; timestamp: number }[]> =>
+    ipcRenderer.invoke('history-get'),
+  historyDelete: (id: string): Promise<void> =>
+    ipcRenderer.invoke('history-delete', id),
+  historyClear: (): Promise<void> =>
+    ipcRenderer.invoke('history-clear'),
+
   // Shell
   openExternal: (url: string) => ipcRenderer.send('open-external', url),
 

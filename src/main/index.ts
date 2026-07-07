@@ -6,6 +6,7 @@ import {
   globalShortcut,
   ipcMain,
   screen,
+  session,
   clipboard,
   nativeImage,
   desktopCapturer,
@@ -170,8 +171,15 @@ function refreshTrayMenu(): void {
   tray?.setContextMenu(buildTrayMenu())
 }
 
+function trayIconPath(): string {
+  // resources/ is two levels up from out/main/ during dev, and at process.resourcesPath when packaged
+  return app.isPackaged
+    ? join(process.resourcesPath, 'tray.png')
+    : join(__dirname, '../../resources/tray.png')
+}
+
 function setupTray(): void {
-  const icon = nativeImage.createEmpty()
+  const icon = nativeImage.createFromPath(trayIconPath())
   tray = new Tray(icon)
   tray.setContextMenu(buildTrayMenu())
   tray.setToolTip('CaptureApp')
@@ -335,6 +343,55 @@ function setupIPC(): void {
     }
     return result
   })
+
+  // Recording — source picker + getDisplayMedia handler
+  ipcMain.handle('get-record-sources', async () => {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 320, height: 180 }
+    })
+    return sources.map((s) => ({ id: s.id, name: s.name, thumbnail: s.thumbnail.toDataURL() }))
+  })
+
+  let pendingSourceId: string | null = null
+  ipcMain.on('set-record-source', (_e, id: string) => { pendingSourceId = id })
+
+  // Upload — routed through main to bypass renderer CORS restrictions
+  ipcMain.handle(
+    'upload-file',
+    async (_e, { buffer, filename, mimeType, token, baseUrl }: { buffer: Uint8Array; filename: string; mimeType: string; token: string; baseUrl: string }) => {
+      const form = new FormData()
+      form.append('file', new Blob([buffer], { type: mimeType }), filename)
+      const res = await fetch(`${baseUrl}/api/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(err.error ?? `Upload failed (${res.status})`)
+      }
+      const { url } = await res.json() as { url: string }
+      return url
+    }
+  )
+
+  // History (last 50 captures)
+  type HistoryItem = { id: string; url: string; filename: string; thumbnail: string; timestamp: number }
+
+  ipcMain.handle('history-add', (_e, item: HistoryItem) => {
+    const list = (store.get('history') as HistoryItem[] | undefined) ?? []
+    store.set('history', [item, ...list].slice(0, 50))
+  })
+  ipcMain.handle('history-get', () => (store.get('history') as HistoryItem[] | undefined) ?? [])
+  ipcMain.handle('history-delete', (_e, id: string) => {
+    const list = (store.get('history') as HistoryItem[] | undefined) ?? []
+    store.set('history', list.filter((i) => i.id !== id))
+  })
+  ipcMain.handle('history-clear', () => store.set('history', []))
+
+  // Expose pendingSourceId to the display-media handler (set up in app.whenReady)
+  return { getPendingSourceId: () => { const id = pendingSourceId; pendingSourceId = null; return id } }
 }
 
 // ─── Auto-updater ───────────────────────────────────────────────────────────
@@ -365,11 +422,20 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  setupIPC()
+  const { getPendingSourceId } = setupIPC()
   mainWindow = createMainWindow()
   setupTray()
 
   registerShortcuts()
+
+  // Let renderer's getDisplayMedia() use a source chosen via our source picker
+  session.defaultSession.setDisplayMediaRequestHandler((_req, callback) => {
+    const id = getPendingSourceId()
+    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+      const source = (id ? sources.find((s) => s.id === id) : null) ?? sources[0]
+      callback({ video: source, audio: 'loopback' })
+    })
+  })
 
   if (!is.dev) setupAutoUpdater()
 
