@@ -1,51 +1,52 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
-)
+const url = import.meta.env.VITE_SUPABASE_URL
+const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+
+export const configured = Boolean(url && key)
+
+// Only create the client if env vars are present — avoids crash on missing .env
+let _client: SupabaseClient | null = null
+function client(): SupabaseClient {
+  if (!configured) throw new Error('Supabase is not configured — copy .env.example to .env and fill in your credentials')
+  if (!_client) _client = createClient(url, key)
+  return _client
+}
 
 export async function signIn(email: string, password: string) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  const { data, error } = await client().auth.signInWithPassword({ email, password })
   if (error) throw error
-
-  // Persist session to electron-store so it survives app restarts
   await window.api.storeSet('session', data.session)
   return data.session
 }
 
 export async function signOut() {
-  await supabase.auth.signOut()
+  await client().auth.signOut()
   await window.api.storeDelete('session')
 }
 
 export async function restoreSession() {
+  if (!configured) return null
   const stored = (await window.api.storeGet('session')) as {
     access_token: string
     refresh_token: string
   } | null
-
   if (!stored) return null
 
-  const { data, error } = await supabase.auth.setSession({
+  const { data, error } = await client().auth.setSession({
     access_token: stored.access_token,
     refresh_token: stored.refresh_token
   })
-
   if (error) {
     await window.api.storeDelete('session')
     return null
   }
-
-  // Persist refreshed session
-  if (data.session) {
-    await window.api.storeSet('session', data.session)
-  }
-
+  if (data.session) await window.api.storeSet('session', data.session)
   return data.session
 }
 
 export async function getAccessToken(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession()
+  if (!configured) return null
+  const { data } = await client().auth.getSession()
   return data.session?.access_token ?? null
 }

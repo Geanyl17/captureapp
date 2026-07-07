@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { signIn, signOut, restoreSession } from '../lib/supabase'
+import { signIn, signOut, restoreSession, configured as supabaseConfigured } from '../lib/supabase'
 import type { Session } from '@supabase/supabase-js'
 
 type KeybindField = 'screenshot' | 'record'
@@ -210,7 +210,16 @@ export function Settings() {
         {/* ── Account ── */}
         <section style={section}>
           <h3 style={sectionTitle}>Account</h3>
-          {session ? (
+          {!supabaseConfigured ? (
+            <div style={{ ...card, borderColor: '#713f12', background: '#1c1208' }}>
+              <p style={{ fontSize: 13, color: '#fbbf24', marginBottom: 8, fontWeight: 600 }}>Not configured</p>
+              <p style={{ fontSize: 13, color: '#a16207', lineHeight: 1.6, margin: 0 }}>
+                Copy <code style={{ background: '#27272a', padding: '1px 5px', borderRadius: 3, fontSize: 12 }}>.env.example</code> to{' '}
+                <code style={{ background: '#27272a', padding: '1px 5px', borderRadius: 3, fontSize: 12 }}>.env</code>{' '}
+                and fill in your Supabase URL and anon key, then restart the app.
+              </p>
+            </div>
+          ) : session ? (
             <div style={card}>
               <p style={{ fontSize: 12, color: '#71717a', marginBottom: 4 }}>Signed in as</p>
               <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 16 }}>{session.user.email}</p>
