@@ -15,7 +15,7 @@ import { join } from 'path'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { tmpdir } from 'os'
-import { readFile, unlink } from 'fs/promises'
+import { unlink } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
@@ -204,21 +204,28 @@ async function captureAndSend(rect: CaptureRect): Promise<void> {
   }
 }
 
-// Wayland: use grim (no portal dialog, captures exactly the requested region)
+// Wayland: capture full screen with spectacle then crop — no portal dialog
 async function captureWayland(rect: CaptureRect): Promise<void> {
   const tmp = join(tmpdir(), `captureapp-${Date.now()}.png`)
-  const geo = `${rect.x},${rect.y} ${rect.width}x${rect.height}`
 
   try {
-    await execAsync(`grim -g "${geo}" "${tmp}"`)
+    // -b background, -n no notification, -f full screen, -o output file
+    await execAsync(`spectacle -b -n -f -o "${tmp}"`)
   } catch {
-    mainWindow?.webContents.send('capture-error', 'grim is required for screenshots on Wayland.\n\nInstall it with:\n  brew install grim\n\nThen restart the app.')
+    mainWindow?.webContents.send('capture-error', 'Screenshot failed — spectacle must be installed.')
     return
   }
 
   try {
-    const buf = await readFile(tmp)
-    mainWindow?.webContents.send('open-editor', `data:image/png;base64,${buf.toString('base64')}`)
+    const img = nativeImage.createFromPath(tmp)
+    const { scaleFactor } = screen.getPrimaryDisplay()
+    const cropped = img.crop({
+      x: Math.round(rect.x * scaleFactor),
+      y: Math.round(rect.y * scaleFactor),
+      width: Math.round(rect.width * scaleFactor),
+      height: Math.round(rect.height * scaleFactor)
+    })
+    mainWindow?.webContents.send('open-editor', cropped.toDataURL())
   } finally {
     unlink(tmp).catch(() => {})
   }
