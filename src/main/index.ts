@@ -245,35 +245,72 @@ async function captureWayland(rect: CaptureRect): Promise<void> {
 // X11 / Windows: use Electron's desktopCapturer
 async function captureDesktop(rect: CaptureRect): Promise<void> {
   const display = screen.getPrimaryDisplay()
-  const { width: logW, height: logH } = display.bounds
+  const { x: dispX, y: dispY, width: logW, height: logH, scaleFactor } = display
+  const physW = Math.round(logW * scaleFactor)
+  const physH = Math.round(logH * scaleFactor)
 
-  // Request generously large so Electron returns the native physical resolution.
-  // Don't rely on scaleFactor — it can be misreported on Windows (e.g. fractional DPI).
+  // Request at 2× physical — Electron caps at native resolution, giving us full quality.
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: { width: logW * 4, height: logH * 4 }
+    thumbnailSize: { width: physW * 2, height: physH * 2 }
   })
-
   if (!sources.length) return
 
-  // Match the primary display's source when display_id is available (multi-monitor safety)
-  const primarySource =
-    sources.find((s) => String(s.display_id) === String(display.id)) ?? sources[0]
+  // Debug: log everything so we can diagnose wrong-monitor / wrong-crop issues
+  console.log('[capture] display:', { id: display.id, dispX, dispY, logW, logH, scaleFactor, physW, physH })
+  console.log('[capture] rect:', rect)
+  sources.forEach((s, i) => {
+    const sz = s.thumbnail.getSize()
+    console.log(`[capture] source[${i}]: name="${s.name}" display_id="${s.display_id}" size=${sz.width}×${sz.height}`)
+  })
 
-  const thumbnail = primarySource.thumbnail
+  // --- Pick the source that belongs to the primary display ---
+  // Strategy 1: display_id match (works on Linux; often fails on Windows)
+  let source = sources.find((s) => String(s.display_id) === String(display.id))
+  // Strategy 2: thumbnail size closest to the physical dimensions of the primary display
+  if (!source) {
+    source = sources.find((s) => {
+      const { width, height } = s.thumbnail.getSize()
+      return Math.abs(width - physW) <= 4 && Math.abs(height - physH) <= 4
+    })
+  }
+  source ??= sources[0]
+  console.log('[capture] using source:', source.name, '/', source.display_id)
+
+  const thumbnail = source.thumbnail
   const { width: imgW, height: imgH } = thumbnail.getSize()
+  console.log('[capture] thumbnail:', imgW, '×', imgH)
 
-  // Derive actual pixel-to-logical scale from the real thumbnail dimensions
-  const scaleX = imgW / logW
-  const scaleY = imgH / logH
+  // --- Detect virtual desktop (all monitors combined into one thumbnail) ---
+  // If the thumbnail is wider than 1.5× the primary display's physical width, it covers
+  // multiple monitors. We must add the primary display's virtual offset to the crop.
+  const allDisplays = screen.getAllDisplays()
+  const totalLogW = Math.max(...allDisplays.map((d) => d.bounds.x + d.bounds.width))
+  const totalLogH = Math.max(...allDisplays.map((d) => d.bounds.y + d.bounds.height))
+  const isVirtualDesktop = imgW > physW * 1.5
 
-  const x = Math.max(0, Math.round(rect.x * scaleX))
-  const y = Math.max(0, Math.round(rect.y * scaleY))
+  let scaleX: number, scaleY: number, offsetX = 0, offsetY = 0
+  if (isVirtualDesktop) {
+    // Scale against total logical virtual desktop size; offset by primary display's logical position
+    scaleX = imgW / totalLogW
+    scaleY = imgH / totalLogH
+    offsetX = Math.round(dispX * scaleX)
+    offsetY = Math.round(dispY * scaleY)
+    console.log('[capture] virtual-desktop mode — totalLog:', totalLogW, '×', totalLogH, 'offset:', offsetX, offsetY, 'scale:', scaleX, scaleY)
+  } else {
+    // Per-monitor source — derive scale from actual thumbnail vs logical display size
+    scaleX = imgW / logW
+    scaleY = imgH / logH
+    console.log('[capture] per-monitor mode — scale:', scaleX, scaleY)
+  }
+
+  const x = Math.max(0, Math.round(rect.x * scaleX + offsetX))
+  const y = Math.max(0, Math.round(rect.y * scaleY + offsetY))
   const w = Math.min(Math.round(rect.width * scaleX), imgW - x)
   const h = Math.min(Math.round(rect.height * scaleY), imgH - y)
+  console.log('[capture] crop:', { x, y, w, h })
 
   if (w <= 0 || h <= 0) return
-
   const cropped = thumbnail.crop({ x, y, width: w, height: h })
   mainWindow?.webContents.send('open-editor', cropped.toDataURL())
 }
