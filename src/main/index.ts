@@ -16,9 +16,6 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
 
-// Must be called before app.whenReady()
-app.disableHardwareAcceleration()
-
 const store = new Store()
 
 let mainWindow: BrowserWindow | null = null
