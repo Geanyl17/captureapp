@@ -212,7 +212,7 @@ async function captureWayland(rect: CaptureRect): Promise<void> {
   try {
     await execAsync(`grim -g "${geo}" "${tmp}"`)
   } catch {
-    mainWindow?.webContents.send('capture-error', 'grim is required for screenshots on Wayland.\n\nInstall it with:\n  sudo dnf install grim')
+    mainWindow?.webContents.send('capture-error', 'grim is required for screenshots on Wayland.\n\nInstall it with:\n  brew install grim\n\nThen restart the app.')
     return
   }
 
