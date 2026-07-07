@@ -16,9 +16,9 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
 
-// Wayland doesn't support Vulkan through Electron — force EGL (OpenGL ES)
-app.commandLine.appendSwitch('use-gl', 'egl')
-app.commandLine.appendSwitch('disable-vulkan')
+// Wayland + Vulkan incompatible in Electron — use desktop OpenGL via ANGLE
+app.commandLine.appendSwitch('use-gl', 'angle')
+app.commandLine.appendSwitch('use-angle', 'opengl')
 
 const store = new Store()
 
