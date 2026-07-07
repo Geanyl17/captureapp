@@ -9,12 +9,18 @@ type View = 'home' | 'editor' | 'history' | 'record' | 'settings'
 export default function App() {
   const [view, setView] = useState<View>('home')
   const [editorImage, setEditorImage] = useState<string | null>(null)
+  const [captureError, setCaptureError] = useState<string | null>(null)
 
   useEffect(() => {
     window.api.onNavigate((v) => setView(v as View))
     window.api.onOpenEditor((dataUrl) => {
+      setCaptureError(null)
       setEditorImage(dataUrl)
       setView('editor')
+    })
+    window.api.onCaptureError((msg) => {
+      setCaptureError(msg)
+      setView('home')
     })
     window.api.onUpdateReady(() => {
       // TODO: show update banner
@@ -54,7 +60,7 @@ export default function App() {
       </nav>
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {view === 'home' && <Home />}
+        {view === 'home' && <Home error={captureError} onErrorDismiss={() => setCaptureError(null)} />}
 
         {view === 'editor' && editorImage ? (
           <Editor

@@ -35,6 +35,8 @@ const api = {
     ipcRenderer.on('navigate', (_e, view) => cb(view)),
   onOpenEditor: (cb: (imageDataUrl: string) => void) =>
     ipcRenderer.on('open-editor', (_e, dataUrl) => cb(dataUrl)),
+  onCaptureError: (cb: (msg: string) => void) =>
+    ipcRenderer.on('capture-error', (_e, msg) => cb(msg)),
   onUpdateReady: (cb: () => void) =>
     ipcRenderer.on('update-ready', () => cb()),
 

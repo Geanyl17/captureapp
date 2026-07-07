@@ -12,9 +12,15 @@ import {
   shell
 } from 'electron'
 import { join } from 'path'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import { tmpdir } from 'os'
+import { readFile, unlink } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
+
+const execAsync = promisify(exec)
 
 const store = new Store()
 
@@ -186,7 +192,40 @@ function startCapture(): void {
 
 type CaptureRect = { x: number; y: number; width: number; height: number }
 
+function onWayland(): boolean {
+  return !!(process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland')
+}
+
 async function captureAndSend(rect: CaptureRect): Promise<void> {
+  if (onWayland()) {
+    await captureWayland(rect)
+  } else {
+    await captureDesktop(rect)
+  }
+}
+
+// Wayland: use grim (no portal dialog, captures exactly the requested region)
+async function captureWayland(rect: CaptureRect): Promise<void> {
+  const tmp = join(tmpdir(), `captureapp-${Date.now()}.png`)
+  const geo = `${rect.x},${rect.y} ${rect.width}x${rect.height}`
+
+  try {
+    await execAsync(`grim -g "${geo}" "${tmp}"`)
+  } catch {
+    mainWindow?.webContents.send('capture-error', 'grim is required for screenshots on Wayland.\n\nInstall it with:\n  sudo dnf install grim')
+    return
+  }
+
+  try {
+    const buf = await readFile(tmp)
+    mainWindow?.webContents.send('open-editor', `data:image/png;base64,${buf.toString('base64')}`)
+  } finally {
+    unlink(tmp).catch(() => {})
+  }
+}
+
+// X11: use Electron's desktopCapturer (no portal on X11)
+async function captureDesktop(rect: CaptureRect): Promise<void> {
   const display = screen.getPrimaryDisplay()
   const { scaleFactor } = display
   const { width: logW, height: logH } = display.bounds

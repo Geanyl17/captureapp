@@ -1,9 +1,15 @@
-import { Camera, Image, CloudUpload, Paintbrush, Video } from 'lucide-react'
+import { Camera, Image, CloudUpload, Paintbrush, Video, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-export function Home() {
+export function Home({ error, onErrorDismiss }: { error?: string | null; onErrorDismiss?: () => void }) {
   return (
     <div style={wrap}>
+      {error && (
+        <div style={errorBanner}>
+          <pre style={{ margin: 0, fontFamily: 'inherit', fontSize: 13, flex: 1, whiteSpace: 'pre-wrap' }}>{error}</pre>
+          <button onClick={onErrorDismiss} style={errorClose}><X size={14} /></button>
+        </div>
+      )}
       <div style={hero}>
         <Camera size={48} color="#3b82f6" strokeWidth={1.5} style={{ marginBottom: 16 }} />
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, marginBottom: 8 }}>CaptureApp</h1>
@@ -47,8 +53,8 @@ function Feature({ Icon, label, desc, dimmed }: { Icon: LucideIcon; label: strin
 }
 
 const wrap: React.CSSProperties = {
-  flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-  justifyContent: 'center', padding: 40, gap: 48
+  flex: 1, position: 'relative', display: 'flex', flexDirection: 'column',
+  alignItems: 'center', justifyContent: 'center', padding: 40, gap: 48
 }
 const hero: React.CSSProperties = {
   display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
@@ -59,6 +65,15 @@ const captureBtn: React.CSSProperties = {
 }
 const featureRow: React.CSSProperties = {
   display: 'flex', gap: 40
+}
+const errorBanner: React.CSSProperties = {
+  position: 'absolute', top: 12, left: 12, right: 12,
+  background: '#1c0a0a', border: '1px solid #7f1d1d', borderRadius: 8,
+  padding: '12px 16px', color: '#fca5a5', display: 'flex', gap: 12, alignItems: 'flex-start'
+}
+const errorClose: React.CSSProperties = {
+  background: 'transparent', border: 'none', color: '#f87171',
+  cursor: 'pointer', padding: 2, flexShrink: 0
 }
 const kbd: React.CSSProperties = {
   background: '#27272a', border: '1px solid #3f3f46', borderRadius: 4,
