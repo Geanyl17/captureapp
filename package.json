@@ -47,7 +47,8 @@
     "@supabase/supabase-js": "^2.49.4",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
-    "fabric": "^7.4.0"
+    "fabric": "^7.4.0",
+    "lucide-react": "^1.23.0"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",

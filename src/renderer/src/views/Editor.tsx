@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Check } from 'lucide-react'
 import { uploadImage } from '../lib/upload'
 
 type Props = { dataUrl: string; onClose: () => void }
@@ -33,8 +34,8 @@ export function Editor({ dataUrl, onClose }: Props) {
             Copy Image
           </button>
           {state === 'done' ? (
-            <button onClick={() => window.api.copyText(uploadedUrl)} style={btn.success}>
-              ✓ Link Copied
+            <button onClick={() => window.api.copyText(uploadedUrl)} style={{ ...btn.success, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Check size={14} /> Link Copied
             </button>
           ) : (
             <button onClick={handleUpload} disabled={state === 'uploading'} style={btn.primary}>

@@ -165,11 +165,13 @@ export function Settings() {
   const [keybinds, setKeybinds] = useState<Keybinds | null>(null)
 
   useEffect(() => {
-    Promise.all([restoreSession(), window.api.getKeybinds()]).then(([s, kb]) => {
-      setSession(s)
-      setKeybinds(kb)
-      setLoading(false)
-    })
+    Promise.all([restoreSession().catch(() => null), window.api.getKeybinds()])
+      .then(([s, kb]) => {
+        setSession(s)
+        setKeybinds(kb)
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false))
   }, [])
 
   async function handleSignIn(e: React.FormEvent) {

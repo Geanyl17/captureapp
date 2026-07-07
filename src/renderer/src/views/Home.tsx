@@ -1,8 +1,11 @@
+import { Camera, Image, CloudUpload, Paintbrush, Video } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+
 export function Home() {
   return (
     <div style={wrap}>
       <div style={hero}>
-        <div style={{ fontSize: 48, marginBottom: 16, lineHeight: 1 }}>📸</div>
+        <Camera size={48} color="#3b82f6" strokeWidth={1.5} style={{ marginBottom: 16 }} />
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, marginBottom: 8 }}>CaptureApp</h1>
         <p style={{ color: '#71717a', fontSize: 14, margin: 0, marginBottom: 28 }}>
           Screenshot · Annotate · Upload
@@ -22,19 +25,21 @@ export function Home() {
       </div>
 
       <div style={featureRow}>
-        <Feature icon="🖼️" label="Region select" desc="Click and drag any area" />
-        <Feature icon="☁️" label="Instant upload" desc="Link copied automatically" />
-        <Feature icon="🎨" label="Annotate" desc="Arrows, text, shapes — Phase 2" dimmed />
-        <Feature icon="🎥" label="Record" desc="Screen video capture — Phase 4" dimmed />
+        <Feature Icon={Image} label="Region select" desc="Click and drag any area" />
+        <Feature Icon={CloudUpload} label="Instant upload" desc="Link copied automatically" />
+        <Feature Icon={Paintbrush} label="Annotate" desc="Arrows, text, shapes — Phase 2" dimmed />
+        <Feature Icon={Video} label="Record" desc="Screen video capture — Phase 4" dimmed />
       </div>
     </div>
   )
 }
 
-function Feature({ icon, label, desc, dimmed }: { icon: string; label: string; desc: string; dimmed?: boolean }) {
+function Feature({ Icon, label, desc, dimmed }: { Icon: LucideIcon; label: string; desc: string; dimmed?: boolean }) {
   return (
     <div style={{ textAlign: 'center', opacity: dimmed ? 0.35 : 1 }}>
-      <div style={{ fontSize: 22, marginBottom: 6 }}>{icon}</div>
+      <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'center' }}>
+        <Icon size={22} color="#52525b" strokeWidth={1.5} />
+      </div>
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>{label}</div>
       <div style={{ fontSize: 12, color: '#52525b' }}>{desc}</div>
     </div>
