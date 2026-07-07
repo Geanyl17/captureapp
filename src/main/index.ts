@@ -16,10 +16,6 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
 
-// Wayland + Vulkan incompatible in Electron — use desktop OpenGL via ANGLE
-app.commandLine.appendSwitch('use-gl', 'angle')
-app.commandLine.appendSwitch('use-angle', 'opengl')
-
 const store = new Store()
 
 let mainWindow: BrowserWindow | null = null
@@ -52,7 +48,11 @@ function createMainWindow(): BrowserWindow {
 
   win.on('ready-to-show', () => {
     win.show()
-    if (is.dev) win.webContents.openDevTools({ mode: 'detach' })
+    if (is.dev) win.webContents.openDevTools({ mode: 'right' })
+  })
+
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error('[main] failed to load:', code, desc, url)
   })
 
   // Minimize to tray on close instead of quitting
