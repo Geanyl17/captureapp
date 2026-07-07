@@ -16,6 +16,10 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
 
+// Wayland doesn't support Vulkan through Electron — force EGL (OpenGL ES)
+app.commandLine.appendSwitch('use-gl', 'egl')
+app.commandLine.appendSwitch('disable-vulkan')
+
 const store = new Store()
 
 let mainWindow: BrowserWindow | null = null
@@ -46,7 +50,10 @@ function createMainWindow(): BrowserWindow {
     }
   })
 
-  win.on('ready-to-show', () => win.show())
+  win.on('ready-to-show', () => {
+    win.show()
+    if (is.dev) win.webContents.openDevTools({ mode: 'detach' })
+  })
 
   // Minimize to tray on close instead of quitting
   win.on('close', (e) => {
