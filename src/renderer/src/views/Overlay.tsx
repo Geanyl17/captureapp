@@ -61,6 +61,10 @@ export function Overlay() {
   }, [])
 
   useEffect(() => {
+    // Overlay window must be fully transparent so the desktop shows through
+    document.documentElement.style.background = 'transparent'
+    document.body.style.background = 'transparent'
+
     const canvas = canvasRef.current
     if (!canvas) return
     canvas.width = window.innerWidth

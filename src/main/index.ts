@@ -85,14 +85,17 @@ function createMainWindow(): BrowserWindow {
 }
 
 function createOverlayWindow(): BrowserWindow {
-  const { width, height } = screen.getPrimaryDisplay().bounds
+  // Use the full bounds (including x/y offset) so the overlay lands on the primary
+  // display even in multi-monitor setups where it isn't at virtual (0, 0).
+  const { x, y, width, height } = screen.getPrimaryDisplay().bounds
 
   const win = new BrowserWindow({
     width,
     height,
-    x: 0,
-    y: 0,
+    x,
+    y,
     transparent: true,
+    backgroundColor: '#00000000',
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -239,29 +242,35 @@ async function captureWayland(rect: CaptureRect): Promise<void> {
   }
 }
 
-// X11: use Electron's desktopCapturer (no portal on X11)
+// X11 / Windows: use Electron's desktopCapturer
 async function captureDesktop(rect: CaptureRect): Promise<void> {
   const display = screen.getPrimaryDisplay()
-  const { scaleFactor } = display
   const { width: logW, height: logH } = display.bounds
 
+  // Request generously large so Electron returns the native physical resolution.
+  // Don't rely on scaleFactor — it can be misreported on Windows (e.g. fractional DPI).
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: {
-      width: Math.round(logW * scaleFactor),
-      height: Math.round(logH * scaleFactor)
-    }
+    thumbnailSize: { width: logW * 4, height: logH * 4 }
   })
 
   if (!sources.length) return
 
-  const thumbnail = sources[0].thumbnail
+  // Match the primary display's source when display_id is available (multi-monitor safety)
+  const primarySource =
+    sources.find((s) => String(s.display_id) === String(display.id)) ?? sources[0]
+
+  const thumbnail = primarySource.thumbnail
   const { width: imgW, height: imgH } = thumbnail.getSize()
 
-  const x = Math.max(0, Math.round(rect.x * scaleFactor))
-  const y = Math.max(0, Math.round(rect.y * scaleFactor))
-  const w = Math.min(Math.round(rect.width * scaleFactor), imgW - x)
-  const h = Math.min(Math.round(rect.height * scaleFactor), imgH - y)
+  // Derive actual pixel-to-logical scale from the real thumbnail dimensions
+  const scaleX = imgW / logW
+  const scaleY = imgH / logH
+
+  const x = Math.max(0, Math.round(rect.x * scaleX))
+  const y = Math.max(0, Math.round(rect.y * scaleY))
+  const w = Math.min(Math.round(rect.width * scaleX), imgW - x)
+  const h = Math.min(Math.round(rect.height * scaleY), imgH - y)
 
   if (w <= 0 || h <= 0) return
 
