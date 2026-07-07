@@ -8,6 +8,7 @@ import {
   screen,
   clipboard,
   nativeImage,
+  desktopCapturer,
   shell
 } from 'electron'
 import { join } from 'path'
@@ -175,10 +176,42 @@ function setupTray(): void {
 
 function startCapture(): void {
   if (overlayWindow) return // already open
+  mainWindow?.hide() // hide main window so it's not in the screenshot
   overlayWindow = createOverlayWindow()
   overlayWindow.once('closed', () => {
     overlayWindow = null
   })
+}
+
+type CaptureRect = { x: number; y: number; width: number; height: number }
+
+async function captureAndSend(rect: CaptureRect): Promise<void> {
+  const display = screen.getPrimaryDisplay()
+  const { scaleFactor } = display
+  const { width: logW, height: logH } = display.bounds
+
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: {
+      width: Math.round(logW * scaleFactor),
+      height: Math.round(logH * scaleFactor)
+    }
+  })
+
+  if (!sources.length) return
+
+  const thumbnail = sources[0].thumbnail
+  const { width: imgW, height: imgH } = thumbnail.getSize()
+
+  const x = Math.max(0, Math.round(rect.x * scaleFactor))
+  const y = Math.max(0, Math.round(rect.y * scaleFactor))
+  const w = Math.min(Math.round(rect.width * scaleFactor), imgW - x)
+  const h = Math.min(Math.round(rect.height * scaleFactor), imgH - y)
+
+  if (w <= 0 || h <= 0) return
+
+  const cropped = thumbnail.crop({ x, y, width: w, height: h })
+  mainWindow?.webContents.send('open-editor', cropped.toDataURL())
 }
 
 function startRecording(): void {
@@ -190,17 +223,28 @@ function startRecording(): void {
 // ─── IPC handlers ───────────────────────────────────────────────────────────
 
 function setupIPC(): void {
-  // Overlay → main: user selected a region, open editor
-  ipcMain.on('capture-region', (_event, imageDataUrl: string) => {
+  // Renderer → trigger capture overlay from main window button
+  ipcMain.on('start-capture', () => startCapture())
+
+  // Overlay → region selected: hide overlay, screenshot, send to editor
+  ipcMain.on('capture-region', (_event, rect: CaptureRect) => {
+    overlayWindow?.hide()
+    setTimeout(async () => {
+      try {
+        await captureAndSend(rect)
+      } finally {
+        closeOverlay()
+        mainWindow?.show()
+        mainWindow?.focus()
+      }
+    }, 200)
+  })
+
+  // Overlay → user cancelled
+  ipcMain.on('capture-cancel', () => {
     closeOverlay()
     mainWindow?.show()
     mainWindow?.focus()
-    mainWindow?.webContents.send('open-editor', imageDataUrl)
-  })
-
-  // Overlay → main: user cancelled
-  ipcMain.on('capture-cancel', () => {
-    closeOverlay()
   })
 
   // Renderer → clipboard

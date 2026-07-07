@@ -3,8 +3,9 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
   // Capture
-  captureRegion: (imageDataUrl: string) =>
-    ipcRenderer.send('capture-region', imageDataUrl),
+  startCapture: () => ipcRenderer.send('start-capture'),
+  captureRegion: (rect: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.send('capture-region', rect),
   captureCancel: () => ipcRenderer.send('capture-cancel'),
 
   // Clipboard
