@@ -23,12 +23,10 @@ import { autoUpdater } from 'electron-updater'
 
 const execAsync = promisify(exec)
 
-// Linux/KDE Wayland only: Electron drives a Vulkan GPU backend that KWin can't
-// composite ("'--ozone-platform=wayland' is not compatible with Vulkan"), which
-// corrupts the compositor. Disabling GPU acceleration avoids that class of glitch.
-// Do NOT do this on Windows — it forces slow software rendering and can break the
-// transparent selection overlay. Must be called before app 'ready'.
-if (process.platform === 'linux') app.disableHardwareAcceleration()
+// NOTE: we intentionally do NOT call app.disableHardwareAcceleration(). It forces
+// software 2D-canvas rendering, which mis-scales the editor's fabric canvas (the
+// "image zoomed into a corner" bug). The GPU path renders the canvas correctly —
+// it's how the user's other Electron apps (VS Code, Discord) work on this Wayland.
 
 const store = new Store()
 

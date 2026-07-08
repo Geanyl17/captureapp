@@ -13,6 +13,9 @@ export function Editor({ dataUrl, onClose }: { dataUrl: string; onClose: () => v
   const canvasElRef = useRef<HTMLCanvasElement>(null)
   const fcRef = useRef<fabric.Canvas | null>(null)
   const drawRef = useRef({ active: false, x0: 0, y0: 0, obj: null as fabric.Object | null })
+  // Fit scale of the display canvas (fit size ÷ native size). Export multiplies by its
+  // inverse so Copy/Upload produce a full-resolution PNG, not the shrunk display size.
+  const scaleRef = useRef(1)
   const [canvasReady, setCanvasReady] = useState(false)
 
   const [tool, setTool] = useState<Tool>('select')
@@ -48,30 +51,30 @@ export function Editor({ dataUrl, onClose }: { dataUrl: string; onClose: () => v
       const pad = 48
       const scale = Math.min(1, (cw - pad) / img.naturalWidth, (ch - pad) / img.naturalHeight)
       if (scale <= 0) return
+      scaleRef.current = scale
       const w = Math.max(1, Math.round(img.naturalWidth * scale))
       const h = Math.max(1, Math.round(img.naturalHeight * scale))
 
+      // fabric v7 defaults originX/originY to 'center'. Without an explicit top-left
+      // origin, the background image is centered at (0,0), so only its bottom-right
+      // quarter lands inside the canvas — the "image stuck in a corner, rest dark" bug.
+      const makeBg = (): fabric.Image =>
+        new fabric.Image(img, { scaleX: scale, scaleY: scale, originX: 'left', originY: 'top', left: 0, top: 0 })
+
       const fc = fcRef.current
       if (!fc) {
-        // enableRetinaScaling:false → backing store == CSS size (1:1). We already
-        // hold a full-resolution screenshot, so we don't need fabric to re-scale the
-        // canvas by devicePixelRatio — and doing so was drawing the image at DPR×
-        // the viewport on HiDPI/Windows-scaled displays (the "corner cut off" bug).
         const created = new fabric.Canvas(el, { width: w, height: h, selection: false, enableRetinaScaling: false })
-        created.backgroundImage = new fabric.Image(img, { scaleX: scale, scaleY: scale })
+        created.backgroundImage = makeBg()
         created.renderAll()
         fcRef.current = created
         currentScale = scale
         setCanvasReady(true)
       } else if (Math.abs(scale - currentScale) > 0.001) {
-        // Container resized — rescale the background and every annotation by the
-        // ratio so they stay aligned with the image (all share the top-left origin).
+        // Container resized — refit the background and rescale every annotation by the
+        // ratio so they stay aligned (all share the top-left origin).
         const ratio = scale / currentScale
         fc.setDimensions({ width: w, height: h })
-        if (fc.backgroundImage) {
-          fc.backgroundImage.scaleX = scale
-          fc.backgroundImage.scaleY = scale
-        }
+        fc.backgroundImage = makeBg()
         fc.getObjects().forEach((o) => {
           o.left = (o.left ?? 0) * ratio
           o.top = (o.top ?? 0) * ratio
@@ -265,7 +268,11 @@ export function Editor({ dataUrl, onClose }: { dataUrl: string; onClose: () => v
   }
 
   function getOutput(): string {
-    return fcRef.current?.toDataURL({ format: 'png', multiplier: 1 }) ?? dataUrl
+    // The canvas is scaled down to fit the window; multiply by 1/scale on export so
+    // Copy/Upload emit the full-resolution capture (with annotations scaled up crisply),
+    // not the shrunk on-screen size.
+    const multiplier = scaleRef.current > 0 ? 1 / scaleRef.current : 1
+    return fcRef.current?.toDataURL({ format: 'png', multiplier }) ?? dataUrl
   }
 
   async function handleUpload() {
