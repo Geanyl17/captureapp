@@ -4,8 +4,11 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   // Capture
   startCapture: () => ipcRenderer.send('start-capture'),
-  captureRegion: (rect: { x: number; y: number; width: number; height: number }) =>
-    ipcRenderer.send('capture-region', rect),
+  // Overlay receives the frozen screenshot to select on…
+  onSelectionImage: (cb: (dataUrl: string) => void) =>
+    ipcRenderer.on('selection-image', (_e, dataUrl) => cb(dataUrl)),
+  // …and sends back the already-cropped PNG.
+  cropDone: (dataUrl: string) => ipcRenderer.send('crop-done', dataUrl),
   captureCancel: () => ipcRenderer.send('capture-cancel'),
 
   // Clipboard
