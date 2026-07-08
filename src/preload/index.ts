@@ -48,6 +48,7 @@ const api = {
   // Window
   minimize: () => ipcRenderer.send('minimize-window'),
   hide: () => ipcRenderer.send('hide-window'),
+  setFullscreen: (flag: boolean) => ipcRenderer.send('set-fullscreen', flag),
 
   // Events from main → renderer
   onNavigate: (cb: (view: string) => void) =>

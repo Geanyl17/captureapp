@@ -22,32 +22,77 @@ export function Editor({ dataUrl, onClose }: { dataUrl: string; onClose: () => v
   const [uploadedUrl, setUploadedUrl] = useState('')
   const [errMsg, setErrMsg] = useState('')
 
-  // Init fabric canvas once per dataUrl
+  // Init fabric canvas per dataUrl and keep it fitted to the container.
+  //
+  // We fit via a ResizeObserver rather than a one-shot measurement at img.onload:
+  // the editor image arrives over IPC while the main window is still hidden, so the
+  // flex container may not have its final (constrained) size yet. Measuring too early
+  // yields an oversized canvas that overflow:auto then clips to a corner. The observer
+  // fires again once the window is shown and laid out, and on any later resize.
   useEffect(() => {
     const container = containerRef.current
     const el = canvasElRef.current
     if (!container || !el) return
 
-    const img = new window.Image()
-    img.onload = () => {
-      const pad = 48
-      const scale = Math.min(
-        1,
-        (container.clientWidth - pad) / img.naturalWidth,
-        (container.clientHeight - pad) / img.naturalHeight
-      )
-      const w = Math.round(img.naturalWidth * scale)
-      const h = Math.round(img.naturalHeight * scale)
+    let disposed = false
+    let currentScale = 0
 
-      const fc = new fabric.Canvas(el, { width: w, height: h, selection: false })
-      fc.backgroundImage = new fabric.Image(img, { scaleX: scale, scaleY: scale })
-      fc.renderAll()
-      fcRef.current = fc
-      setCanvasReady(true)
+    const img = new window.Image()
+
+    const fit = (): void => {
+      if (disposed || !img.naturalWidth) return
+      const cw = container.clientWidth
+      const ch = container.clientHeight
+      if (cw < 2 || ch < 2) return // not laid out yet — observer will call again
+
+      const pad = 48
+      const scale = Math.min(1, (cw - pad) / img.naturalWidth, (ch - pad) / img.naturalHeight)
+      if (scale <= 0) return
+      const w = Math.max(1, Math.round(img.naturalWidth * scale))
+      const h = Math.max(1, Math.round(img.naturalHeight * scale))
+
+      const fc = fcRef.current
+      if (!fc) {
+        // enableRetinaScaling:false → backing store == CSS size (1:1). We already
+        // hold a full-resolution screenshot, so we don't need fabric to re-scale the
+        // canvas by devicePixelRatio — and doing so was drawing the image at DPR×
+        // the viewport on HiDPI/Windows-scaled displays (the "corner cut off" bug).
+        const created = new fabric.Canvas(el, { width: w, height: h, selection: false, enableRetinaScaling: false })
+        created.backgroundImage = new fabric.Image(img, { scaleX: scale, scaleY: scale })
+        created.renderAll()
+        fcRef.current = created
+        currentScale = scale
+        setCanvasReady(true)
+      } else if (Math.abs(scale - currentScale) > 0.001) {
+        // Container resized — rescale the background and every annotation by the
+        // ratio so they stay aligned with the image (all share the top-left origin).
+        const ratio = scale / currentScale
+        fc.setDimensions({ width: w, height: h })
+        if (fc.backgroundImage) {
+          fc.backgroundImage.scaleX = scale
+          fc.backgroundImage.scaleY = scale
+        }
+        fc.getObjects().forEach((o) => {
+          o.left = (o.left ?? 0) * ratio
+          o.top = (o.top ?? 0) * ratio
+          o.scaleX = (o.scaleX ?? 1) * ratio
+          o.scaleY = (o.scaleY ?? 1) * ratio
+          o.setCoords()
+        })
+        currentScale = scale
+        fc.renderAll()
+      }
     }
+
+    img.onload = fit
     img.src = dataUrl
 
+    const ro = new ResizeObserver(() => fit())
+    ro.observe(container)
+
     return () => {
+      disposed = true
+      ro.disconnect()
       fcRef.current?.dispose()
       fcRef.current = null
       setCanvasReady(false)
@@ -220,7 +265,7 @@ export function Editor({ dataUrl, onClose }: { dataUrl: string; onClose: () => v
   }
 
   function getOutput(): string {
-    return fcRef.current?.toDataURL({ format: 'png' }) ?? dataUrl
+    return fcRef.current?.toDataURL({ format: 'png', multiplier: 1 }) ?? dataUrl
   }
 
   async function handleUpload() {

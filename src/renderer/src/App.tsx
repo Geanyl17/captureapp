@@ -13,6 +13,12 @@ export default function App() {
   const [editorImage, setEditorImage] = useState<string | null>(null)
   const [captureError, setCaptureError] = useState<string | null>(null)
 
+  // The main process opens the editor fullscreen so captures show at full size;
+  // leave fullscreen again as soon as we navigate anywhere else.
+  useEffect(() => {
+    if (view !== 'editor') window.api.setFullscreen(false)
+  }, [view])
+
   useEffect(() => {
     window.api.onNavigate((v) => setView(v as View))
     window.api.onOpenEditor((dataUrl) => {
@@ -70,7 +76,9 @@ export default function App() {
             onClose={() => { setEditorImage(null); setView('home') }}
           />
         ) : view === 'editor' ? (
-          <Placeholder message="No capture yet — press Ctrl+Shift+S to take a screenshot" />
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#71717a', fontSize: 14 }}>
+            No capture yet — press Ctrl+Shift+S to take a screenshot
+          </div>
         ) : null}
 
         {view === 'history' && <History />}

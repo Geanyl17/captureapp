@@ -23,11 +23,19 @@ import { autoUpdater } from 'electron-updater'
 
 const execAsync = promisify(exec)
 
+// Linux/KDE Wayland only: Electron drives a Vulkan GPU backend that KWin can't
+// composite ("'--ozone-platform=wayland' is not compatible with Vulkan"), which
+// corrupts the compositor. Disabling GPU acceleration avoids that class of glitch.
+// Do NOT do this on Windows — it forces slow software rendering and can break the
+// transparent selection overlay. Must be called before app 'ready'.
+if (process.platform === 'linux') app.disableHardwareAcceleration()
+
 const store = new Store()
 
 let mainWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
 let tray: Tray | null = null
+let overlayDisplay: Electron.Display | null = null
 
 const DEFAULT_KEYBINDS = { screenshot: 'CmdOrCtrl+Shift+S', record: 'CmdOrCtrl+Shift+R' }
 let currentKeybinds = {
@@ -62,6 +70,17 @@ function createMainWindow(): BrowserWindow {
     console.error('[main] failed to load:', code, desc, url)
   })
 
+  // Forward the renderer's [editor]/[capture] console logs to the terminal so
+  // capture + display diagnostics show up in one place. (Electron changed this
+  // event's signature across versions, so read the message defensively.)
+  win.webContents.on('console-message', (...args: unknown[]) => {
+    const first = args[0] as { message?: string } | undefined
+    const message = typeof first === 'object' && first?.message !== undefined ? first.message : (args[2] as string)
+    if (typeof message === 'string' && (message.startsWith('[editor]') || message.startsWith('[capture]'))) {
+      console.log('[renderer]', message)
+    }
+  })
+
   // Minimize to tray on close instead of quitting
   win.on('close', (e) => {
     if (!app.isQuitting) {
@@ -84,16 +103,18 @@ function createMainWindow(): BrowserWindow {
   return win
 }
 
-function createOverlayWindow(): BrowserWindow {
-  // Use the full bounds (including x/y offset) so the overlay lands on the primary
-  // display even in multi-monitor setups where it isn't at virtual (0, 0).
-  const { x, y, width, height } = screen.getPrimaryDisplay().bounds
+function createOverlayWindow(display: Electron.Display): BrowserWindow {
+  const { x, y, width, height } = display.bounds
 
   const win = new BrowserWindow({
     width,
     height,
     x,
     y,
+    // On Wayland, position/size hints are ignored by the compositor for regular windows;
+    // fullscreen is the only reliable way to guarantee the overlay covers the entire screen.
+    // On Windows/macOS we rely on the explicit width/height/x/y instead.
+    fullscreen: process.platform === 'linux',
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
@@ -111,7 +132,6 @@ function createOverlayWindow(): BrowserWindow {
 
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true)
-  win.setFullScreenable(false)
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?view=overlay`)
@@ -134,6 +154,17 @@ function createOverlayWindow(): BrowserWindow {
 function closeOverlay(): void {
   overlayWindow?.close()
   overlayWindow = null
+}
+
+// Bring the main window forward to show a capture in the editor. (We tried maximize()
+// and setFullScreen() to show captures larger, but maximize() snaps back on KWin and
+// fullscreen leaves the window un-draggable — and neither addresses the underlying
+// "window paints into a quarter of the surface" bug, which has to be fixed first.)
+function showEditorWindow(): void {
+  const win = mainWindow
+  if (!win) return
+  win.show()
+  win.focus()
 }
 
 // ─── Shortcuts ──────────────────────────────────────────────────────────────
@@ -193,12 +224,19 @@ function setupTray(): void {
 // ─── Capture / Record ───────────────────────────────────────────────────────
 
 function startCapture(): void {
-  if (overlayWindow) return // already open
-  mainWindow?.hide() // hide main window so it's not in the screenshot
-  overlayWindow = createOverlayWindow()
-  overlayWindow.once('closed', () => {
-    overlayWindow = null
-  })
+  if (overlayWindow) return
+  mainWindow?.hide()
+  if (onWayland()) {
+    // On Wayland we can't position a transparent overlay reliably (the compositor
+    // decides where fullscreen windows go), so we hand region selection to
+    // spectacle's own selector, which the compositor draws correctly. See
+    // captureWaylandRegion() for why the `-i` flag matters.
+    captureWaylandRegion()
+  } else {
+    overlayDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    overlayWindow = createOverlayWindow(overlayDisplay)
+    overlayWindow.once('closed', () => { overlayWindow = null })
+  }
 }
 
 type CaptureRect = { x: number; y: number; width: number; height: number }
@@ -208,111 +246,129 @@ function onWayland(): boolean {
 }
 
 async function captureAndSend(rect: CaptureRect): Promise<void> {
-  if (onWayland()) {
-    await captureWayland(rect)
-  } else {
-    await captureDesktop(rect)
-  }
+  await captureDesktop(rect)
 }
 
-// Wayland: capture full screen with spectacle then crop — no portal dialog
-async function captureWayland(rect: CaptureRect): Promise<void> {
+// Wayland: let spectacle's own selector handle region selection, then read the
+// resulting PNG.
+//
+// The bug this fixes: the user runs spectacle for other things, so it is resident
+// on D-Bus (org.kde.Spectacle). Without `-i`, a plain `spectacle -b -r …` call is
+// handed off to that resident instance and the CLI process returns *immediately* —
+// before the screenshot is written. We then read a half-written PNG, which decodes
+// to the top slice of the image with the rest black (the "small snippet on a dark
+// background" symptom). `-i` starts an isolated instance that does NOT register on
+// D-Bus, so `-b` blocks until the file is fully written before execAsync resolves.
+async function captureWaylandRegion(): Promise<void> {
   const tmp = join(tmpdir(), `captureapp-${Date.now()}.png`)
+  const restore = (): void => { mainWindow?.show(); mainWindow?.focus() }
 
   try {
-    // -b background, -n no notification, -f full screen, -o output file
-    await execAsync(`spectacle -b -n -f -o "${tmp}"`)
-  } catch {
-    mainWindow?.webContents.send('capture-error', 'Screenshot failed — spectacle must be installed.')
-    return
+    // -i: isolated instance (don't touch the user's resident spectacle / D-Bus)
+    // -b: exit after capture, no editor GUI   -n: no notification
+    // -r: interactive rectangular region selector
+    await execAsync(`spectacle -i -b -n -r -o "${tmp}"`)
+  } catch (e) {
+    // spectacle exits non-zero when the user presses ESC to cancel — that's not an
+    // error. Only surface a message if spectacle isn't installed at all.
+    const msg = (e as { message?: string }).message ?? ''
+    if (/not found|ENOENT|\b127\b/.test(msg)) {
+      mainWindow?.webContents.send('capture-error', 'Screenshot failed — is spectacle installed?')
+      restore()
+      return
+    }
   }
 
   try {
     const img = nativeImage.createFromPath(tmp)
-    const { scaleFactor } = screen.getPrimaryDisplay()
-    const cropped = img.crop({
-      x: Math.round(rect.x * scaleFactor),
-      y: Math.round(rect.y * scaleFactor),
-      width: Math.round(rect.width * scaleFactor),
-      height: Math.round(rect.height * scaleFactor)
-    })
-    mainWindow?.webContents.send('open-editor', cropped.toDataURL())
+    const sz = img.getSize()
+    console.log('[capture] spectacle region →', `${sz.width}×${sz.height}`, 'empty=', img.isEmpty())
+    if (!img.isEmpty()) {
+      // Open the editor fullscreen so the capture is shown at a proper size instead of
+      // a small thumbnail in the default 1100×720 window.
+      showEditorWindow()
+      mainWindow?.webContents.send('open-editor', img.toDataURL())
+    } else {
+      // Empty (with no exec error) means the user cancelled — just restore the window.
+      restore()
+    }
   } finally {
     unlink(tmp).catch(() => {})
   }
 }
 
 // X11 / Windows: use Electron's desktopCapturer
+// rect is in VIRTUAL DESKTOP logical coordinates
 async function captureDesktop(rect: CaptureRect): Promise<void> {
-  const display = screen.getPrimaryDisplay()
-  const { x: dispX, y: dispY, width: logW, height: logH, scaleFactor } = display
-  const physW = Math.round(logW * scaleFactor)
-  const physH = Math.round(logH * scaleFactor)
-
-  // Request at 2× physical — Electron caps at native resolution, giving us full quality.
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: physW * 2, height: physH * 2 }
-  })
-  if (!sources.length) return
-
-  // Debug: log everything so we can diagnose wrong-monitor / wrong-crop issues
-  console.log('[capture] display:', { id: display.id, dispX, dispY, logW, logH, scaleFactor, physW, physH })
-  console.log('[capture] rect:', rect)
-  sources.forEach((s, i) => {
-    const sz = s.thumbnail.getSize()
-    console.log(`[capture] source[${i}]: name="${s.name}" display_id="${s.display_id}" size=${sz.width}×${sz.height}`)
-  })
-
-  // --- Pick the source that belongs to the primary display ---
-  // Strategy 1: display_id match (works on Linux; often fails on Windows)
-  let source = sources.find((s) => String(s.display_id) === String(display.id))
-  // Strategy 2: thumbnail size closest to the physical dimensions of the primary display
-  if (!source) {
-    source = sources.find((s) => {
-      const { width, height } = s.thumbnail.getSize()
-      return Math.abs(width - physW) <= 4 && Math.abs(height - physH) <= 4
-    })
-  }
-  source ??= sources[0]
-  console.log('[capture] using source:', source.name, '/', source.display_id)
-
-  const thumbnail = source.thumbnail
-  const { width: imgW, height: imgH } = thumbnail.getSize()
-  console.log('[capture] thumbnail:', imgW, '×', imgH)
-
-  // --- Detect virtual desktop (all monitors combined into one thumbnail) ---
-  // If the thumbnail is wider than 1.5× the primary display's physical width, it covers
-  // multiple monitors. We must add the primary display's virtual offset to the crop.
   const allDisplays = screen.getAllDisplays()
   const totalLogW = Math.max(...allDisplays.map((d) => d.bounds.x + d.bounds.width))
   const totalLogH = Math.max(...allDisplays.map((d) => d.bounds.y + d.bounds.height))
-  const isVirtualDesktop = imgW > physW * 1.5
+  const maxPhysW = Math.max(...allDisplays.map((d) => Math.round(d.bounds.width * d.scaleFactor)))
 
-  let scaleX: number, scaleY: number, offsetX = 0, offsetY = 0
-  if (isVirtualDesktop) {
-    // Scale against total logical virtual desktop size; offset by primary display's logical position
-    scaleX = imgW / totalLogW
-    scaleY = imgH / totalLogH
-    offsetX = Math.round(dispX * scaleX)
-    offsetY = Math.round(dispY * scaleY)
-    console.log('[capture] virtual-desktop mode — totalLog:', totalLogW, '×', totalLogH, 'offset:', offsetX, offsetY, 'scale:', scaleX, scaleY)
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: totalLogW * 4, height: totalLogH * 4 }
+  })
+  if (!sources.length) return
+
+  sources.forEach((s, i) => {
+    const sz = s.thumbnail.getSize()
+    console.log(`[desktop] source[${i}]: name="${s.name}" display_id="${s.display_id}" ${sz.width}×${sz.height}`)
+  })
+  console.log('[desktop] virtualRect:', rect)
+
+  // Check if any source covers the full virtual desktop (wider than any single monitor)
+  const virtualSource = sources.find((s) => s.thumbnail.getSize().width > maxPhysW * 1.1)
+
+  if (virtualSource) {
+    // Combined virtual desktop source — scale against total logical dimensions, no offset needed
+    const { width: imgW, height: imgH } = virtualSource.thumbnail.getSize()
+    const scaleX = imgW / totalLogW
+    const scaleY = imgH / totalLogH
+
+    const x = Math.max(0, Math.round(rect.x * scaleX))
+    const y = Math.max(0, Math.round(rect.y * scaleY))
+    const w = Math.min(Math.round(rect.width * scaleX), imgW - x)
+    const h = Math.min(Math.round(rect.height * scaleY), imgH - y)
+    console.log('[desktop] virtual source — scale:', scaleX.toFixed(3), scaleY.toFixed(3), 'crop:', { x, y, w, h })
+
+    if (w <= 0 || h <= 0) return
+    const cropped = virtualSource.thumbnail.crop({ x, y, width: w, height: h })
+    mainWindow?.webContents.send('open-editor', cropped.toDataURL())
   } else {
-    // Per-monitor source — derive scale from actual thumbnail vs logical display size
-    scaleX = imgW / logW
-    scaleY = imgH / logH
-    console.log('[capture] per-monitor mode — scale:', scaleX, scaleY)
+    // Per-monitor sources — find the monitor containing the selection origin, subtract its offset
+    const targetDisplay = screen.getDisplayNearestPoint({ x: rect.x, y: rect.y })
+    // NB: Display exposes geometry under `.bounds`, NOT as top-level x/y/width/height.
+    // Reading them off the Display directly yields undefined → NaN crop coords (this
+    // silently broke every capture on Windows, which uses this per-monitor branch).
+    const { x: dispX, y: dispY, width: logW, height: logH } = targetDisplay.bounds
+    const { scaleFactor } = targetDisplay
+    const physW = Math.round(logW * scaleFactor)
+    const physH = Math.round(logH * scaleFactor)
+
+    let source = sources.find((s) => String(s.display_id) === String(targetDisplay.id))
+    if (!source) {
+      source = sources.find((s) => {
+        const { width, height } = s.thumbnail.getSize()
+        return Math.abs(width - physW) <= 4 && Math.abs(height - physH) <= 4
+      })
+    }
+    source ??= sources[0]
+
+    const { width: imgW, height: imgH } = source.thumbnail.getSize()
+    const scaleX = imgW / logW
+    const scaleY = imgH / logH
+    // Convert virtual rect to display-local before scaling
+    const x = Math.max(0, Math.round((rect.x - dispX) * scaleX))
+    const y = Math.max(0, Math.round((rect.y - dispY) * scaleY))
+    const w = Math.min(Math.round(rect.width * scaleX), imgW - x)
+    const h = Math.min(Math.round(rect.height * scaleY), imgH - y)
+    console.log('[desktop] per-monitor source:', source.name, '— scale:', scaleX.toFixed(3), scaleY.toFixed(3), 'crop:', { x, y, w, h })
+
+    if (w <= 0 || h <= 0) return
+    const cropped = source.thumbnail.crop({ x, y, width: w, height: h })
+    mainWindow?.webContents.send('open-editor', cropped.toDataURL())
   }
-
-  const x = Math.max(0, Math.round(rect.x * scaleX + offsetX))
-  const y = Math.max(0, Math.round(rect.y * scaleY + offsetY))
-  const w = Math.min(Math.round(rect.width * scaleX), imgW - x)
-  const h = Math.min(Math.round(rect.height * scaleY), imgH - y)
-  console.log('[capture] crop:', { x, y, w, h })
-
-  if (w <= 0 || h <= 0) return
-  const cropped = thumbnail.crop({ x, y, width: w, height: h })
-  mainWindow?.webContents.send('open-editor', cropped.toDataURL())
 }
 
 function startRecording(): void {
@@ -323,20 +379,26 @@ function startRecording(): void {
 
 // ─── IPC handlers ───────────────────────────────────────────────────────────
 
-function setupIPC(): void {
+function setupIPC(): { getPendingSourceId: () => string | null } {
   // Renderer → trigger capture overlay from main window button
   ipcMain.on('start-capture', () => startCapture())
 
   // Overlay → region selected: hide overlay, screenshot, send to editor
   ipcMain.on('capture-region', (_event, rect: CaptureRect) => {
+    // Convert overlay-local coords to virtual-desktop logical coords using the
+    // display we deliberately placed the overlay on. `overlayWindow.getBounds()`
+    // is unreliable (returns {0,0} for fullscreen windows on Wayland), so trust
+    // the stored display bounds instead. (This path is X11/Windows only now.)
+    const off = overlayDisplay?.bounds ?? { x: 0, y: 0 }
+    const virtualRect: CaptureRect = { x: off.x + rect.x, y: off.y + rect.y, width: rect.width, height: rect.height }
+
     overlayWindow?.hide()
     setTimeout(async () => {
       try {
-        await captureAndSend(rect)
+        await captureAndSend(virtualRect)
       } finally {
         closeOverlay()
-        mainWindow?.show()
-        mainWindow?.focus()
+        showEditorWindow()
       }
     }, 200)
   })
@@ -371,6 +433,8 @@ function setupIPC(): void {
   // Window controls
   ipcMain.on('minimize-window', () => mainWindow?.minimize())
   ipcMain.on('hide-window', () => mainWindow?.hide())
+  // Renderer leaves the editor → drop out of the fullscreen we entered for the capture
+  ipcMain.on('set-fullscreen', (_e, flag: boolean) => mainWindow?.setFullScreen(flag))
 
   // Keybind management
   ipcMain.handle('get-keybinds', () => ({ ...currentKeybinds }))
@@ -407,7 +471,7 @@ function setupIPC(): void {
     'upload-file',
     async (_e, { buffer, filename, mimeType, token, baseUrl }: { buffer: Uint8Array; filename: string; mimeType: string; token: string; baseUrl: string }) => {
       const form = new FormData()
-      form.append('file', new Blob([buffer], { type: mimeType }), filename)
+      form.append('file', new Blob([new Uint8Array(buffer)], { type: mimeType }), filename)
       const res = await fetch(`${baseUrl}/api/upload`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
