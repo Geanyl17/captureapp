@@ -126,7 +126,22 @@ export function Record() {
           </div>
         </div>
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: '#09090b' }}>
-          <video src={videoUrl} controls style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} />
+          <video
+            src={videoUrl}
+            controls
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget
+              // MediaRecorder WebM has no duration header (reports Infinity), which
+              // breaks the scrubber. Seek past the end once to force the browser to
+              // compute the real duration, then reset to the start.
+              if (v.duration === Infinity || Number.isNaN(v.duration)) {
+                v.currentTime = 1e101
+                const onTime = (): void => { v.currentTime = 0; v.removeEventListener('timeupdate', onTime) }
+                v.addEventListener('timeupdate', onTime)
+              }
+            }}
+            style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }}
+          />
         </div>
       </div>
     )

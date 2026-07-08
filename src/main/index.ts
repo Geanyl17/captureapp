@@ -73,7 +73,7 @@ function createMainWindow(): BrowserWindow {
   win.webContents.on('console-message', (...args: unknown[]) => {
     const first = args[0] as { message?: string } | undefined
     const message = typeof first === 'object' && first?.message !== undefined ? first.message : (args[2] as string)
-    if (typeof message === 'string' && (message.startsWith('[editor]') || message.startsWith('[capture]'))) {
+    if (typeof message === 'string' && message.startsWith('[capture]')) {
       console.log('[renderer]', message)
     }
   })
