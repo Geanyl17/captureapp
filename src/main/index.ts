@@ -86,6 +86,14 @@ function createMainWindow(): BrowserWindow {
     }
   })
 
+  // Minimize should tuck the app into the tray (hidden icons), not sit in the taskbar.
+  // Prevent the actual minimize where the platform allows it (so no minimized state to
+  // restore), then hide() to drop it from the taskbar. The tray icon reopens it.
+  win.on('minimize', (event?: Electron.Event) => {
+    event?.preventDefault()
+    win.hide()
+  })
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }

@@ -5,13 +5,22 @@ import { Settings } from './views/Settings'
 import { Home } from './views/Home'
 import { History } from './views/History'
 import { Record } from './views/Record'
+import { restoreSession } from './lib/supabase'
 
 type View = 'home' | 'editor' | 'history' | 'record' | 'settings'
 
 export default function App() {
+  const isOverlay = new URLSearchParams(window.location.search).get('view') === 'overlay'
   const [view, setView] = useState<View>('home')
   const [editorImage, setEditorImage] = useState<string | null>(null)
   const [captureError, setCaptureError] = useState<string | null>(null)
+
+  // Restore the saved Supabase session on launch (main window only) so uploads are
+  // authenticated immediately, regardless of which tab is opened first — not just
+  // when Settings happens to mount.
+  useEffect(() => {
+    if (!isOverlay) restoreSession().catch(() => {})
+  }, [isOverlay])
 
   // The main process opens the editor fullscreen so captures show at full size;
   // leave fullscreen again as soon as we navigate anywhere else.
@@ -35,9 +44,8 @@ export default function App() {
     })
   }, [])
 
-  // Overlay window — transparent fullscreen, separate BrowserWindow
-  const urlView = new URLSearchParams(window.location.search).get('view')
-  if (urlView === 'overlay') {
+  // Overlay window — separate BrowserWindow that shows the frozen screenshot to select on
+  if (isOverlay) {
     return <Overlay />
   }
 

@@ -33,8 +33,8 @@ export function Home({ error, onErrorDismiss }: { error?: string | null; onError
       <div style={featureRow}>
         <Feature Icon={Image} label="Region select" desc="Click and drag any area" />
         <Feature Icon={CloudUpload} label="Instant upload" desc="Link copied automatically" />
-        <Feature Icon={Paintbrush} label="Annotate" desc="Arrows, text, shapes — Phase 2" dimmed />
-        <Feature Icon={Video} label="Record" desc="Screen video capture — Phase 4" dimmed />
+        <Feature Icon={Paintbrush} label="Annotate" desc="Arrows, text, shapes" />
+        <Feature Icon={Video} label="Record" desc="Screen video capture" />
       </div>
     </div>
   )

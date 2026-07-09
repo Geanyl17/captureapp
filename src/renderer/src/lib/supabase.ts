@@ -47,6 +47,12 @@ export async function restoreSession() {
 
 export async function getAccessToken(): Promise<string | null> {
   if (!configured) return null
-  const { data } = await client().auth.getSession()
+  let { data } = await client().auth.getSession()
+  // If the client has no in-memory session yet (e.g. an upload fires right after
+  // launch, before the startup restore finished), restore from disk and retry.
+  if (!data.session) {
+    await restoreSession()
+    data = (await client().auth.getSession()).data
+  }
   return data.session?.access_token ?? null
 }
