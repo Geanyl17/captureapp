@@ -25,6 +25,15 @@ export function Editor({ dataUrl, onClose }: { dataUrl: string; onClose: () => v
   const [uploadedUrl, setUploadedUrl] = useState('')
   const [errMsg, setErrMsg] = useState('')
 
+  // A new capture can arrive while the editor is already open (global shortcut fires
+  // regardless of view) — reset upload state so the toolbar doesn't keep showing the
+  // previous image's "Link Copied" state / re-copy its stale URL.
+  useEffect(() => {
+    setUploadState('idle')
+    setUploadedUrl('')
+    setErrMsg('')
+  }, [dataUrl])
+
   // Init fabric canvas per dataUrl and keep it fitted to the container.
   //
   // We fit via a ResizeObserver rather than a one-shot measurement at img.onload:
